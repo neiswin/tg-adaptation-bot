@@ -1,0 +1,24 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.dist-info/
+.venv/
+venv/
+.envrc
+
+# tooling
+.idea/
+.vscode/
+
+# logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

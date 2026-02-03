@@ -1,0 +1,5 @@
+aiogram==3.*
+asyncpg
+aiohttp
+python-dotenv
+bleach

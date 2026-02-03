@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: tg_adaptation_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tg_adaptation
+      POSTGRES_USER: tg_user
+      POSTGRES_PASSWORD: tg_password
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+volumes:
+  pg_data:
