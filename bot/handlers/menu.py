@@ -95,6 +95,27 @@ def build_contacts_group_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
+def build_events_list_keyboard(rows) -> InlineKeyboardMarkup:
+    buttons = []
+
+    for row in rows:
+        buttons.append([
+            InlineKeyboardButton(
+                text=row["title"],
+                callback_data=f"events:open:{row['event_id']}",
+            )
+        ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_event_card_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="events:list")]
+        ]
+    )
+
 
 async def get_section_pages(db_pool, section_code: str):
     async with db_pool.acquire() as conn:
@@ -306,36 +327,62 @@ async def get_active_events(db_pool):
                 id
         """)
     return rows
+async def get_event_by_id(db_pool, event_id: str):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT
+                event_id,
+                title,
+                date_start,
+                date_end,
+                time_start,
+                time_end,
+                date_precision,
+                time_precision,
+                date_text,
+                time_text,
+                sort_date,
+                place,
+                description,
+                organizer,
+                contact,
+                link,
+                sort_order
+            FROM events
+            WHERE active = TRUE
+              AND event_id = $1
+            LIMIT 1
+        """, event_id)
+    return row
 
 
 
 def build_event_text(row) -> str:
-    parts = [f"<b>{row['title']}</b>"]
+    parts = [f"✅ <b>{row['title']}</b>"]
 
     date_line = format_event_date(row)
     time_line = format_event_time(row)
 
-    if date_line and time_line:
-        parts.append(f"{date_line}, {time_line}")
-    elif date_line:
-        parts.append(date_line)
-    elif time_line:
-        parts.append(time_line)
+    if date_line:
+        parts.append(f"📅 {date_line}")
+
+    if time_line:
+        parts.append(f"🕒 {time_line}")
 
     if row["place"]:
-        parts.append(f"<b>Место</b>: {row['place']}")
+        parts.append(f"📍 {row['place']}")
 
     if row["description"]:
         parts.append(normalize_html_text(row["description"]))
 
     if row["organizer"]:
-        parts.append(f"<b>Организатор</b>: {row['organizer']}")
+        parts.append(f"👤 Организатор: {row['organizer']}")
 
     if row["contact"]:
-        parts.append(f"<b>Контакт</b>: {row['contact']}")
+        parts.append(f"📞 Контакт: {row['contact']}")
 
     if row["link"]:
-        parts.append(f"<b>Ссылка</b>: {row['link']}")
+        parts.append(f"🔗 Ссылка: {row['link']}")
 
     return "\n\n".join(parts).strip()
 
@@ -368,6 +415,36 @@ def day_of_week_title(day: int) -> str:
     }
     return mapping.get(day, f"День {day}")
 
+MONTH_NAMES_RU = {
+    1: "января",
+    2: "февраля",
+    3: "марта",
+    4: "апреля",
+    5: "мая",
+    6: "июня",
+    7: "июля",
+    8: "августа",
+    9: "сентября",
+    10: "октября",
+    11: "ноября",
+    12: "декабря",
+}
+
+MONTH_NAMES_RU_NOMINATIVE = {
+    1: "Январь",
+    2: "Февраль",
+    3: "Март",
+    4: "Апрель",
+    5: "Май",
+    6: "Июнь",
+    7: "Июль",
+    8: "Август",
+    9: "Сентябрь",
+    10: "Октябрь",
+    11: "Ноябрь",
+    12: "Декабрь",
+}
+
 def format_event_date(row) -> str:
     if row["date_text"]:
         return row["date_text"]
@@ -379,16 +456,26 @@ def format_event_date(row) -> str:
     if precision == "none":
         return "Дата уточняется"
 
-    if date_start and date_end:
-        if date_start.year == date_end.year and date_start.month == date_end.month:
-            return f"{date_start.strftime('%d')}-{date_end.strftime('%d.%m.%Y')}"
-        return f"{date_start.strftime('%d.%m.%Y')} - {date_end.strftime('%d.%m.%Y')}"
+    if precision == "month" and date_start:
+        return format_month_human(date_start)
 
-    if date_start and precision == "month":
-        return date_start.strftime("%m.%Y")
+    if date_start and date_end:
+        if date_start == date_end:
+            return format_date_human(date_start)
+
+        if date_start.year == date_end.year and date_start.month == date_end.month:
+            return f"{date_start.day}–{date_end.day} {MONTH_NAMES_RU[date_start.month]} {date_start.year}"
+
+        if date_start.year == date_end.year:
+            return (
+                f"{date_start.day} {MONTH_NAMES_RU[date_start.month]} — "
+                f"{date_end.day} {MONTH_NAMES_RU[date_end.month]} {date_end.year}"
+            )
+
+        return f"{format_date_human(date_start)} — {format_date_human(date_end)}"
 
     if date_start:
-        return date_start.strftime("%d.%m.%Y")
+        return format_date_human(date_start)
 
     return "Дата уточняется"
 
@@ -405,13 +492,23 @@ def format_event_time(row) -> str:
         return "Весь день"
 
     if time_start and time_end:
-        return f"{time_start.strftime('%H:%M')}-{time_end.strftime('%H:%M')}"
+        return f"{time_start.strftime('%H:%M')}–{time_end.strftime('%H:%M')}"
 
     if time_start:
         return time_start.strftime("%H:%M")
 
+    if precision == "none":
+        return ""
+
     return ""
 
+
+def format_date_human(dt) -> str:
+    return f"{dt.day} {MONTH_NAMES_RU[dt.month]} {dt.year}"
+
+
+def format_month_human(dt) -> str:
+    return f"{MONTH_NAMES_RU_NOMINATIVE[dt.month]} {dt.year}"
 
 def build_contact_text(row) -> str:
     parts = []
@@ -642,6 +739,49 @@ async def show_faq(callback: CallbackQuery, db_pool):
         reply_markup=build_info_back_keyboard(),
     )
 
+async def show_events_list_message(message: Message, db_pool):
+    rows = await get_active_events(db_pool)
+
+    if not rows:
+        await message.answer(
+            "📅 <b>Мероприятия</b>\n\nПока нет активных мероприятий.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return
+
+    await message.answer(
+        "📅 <b>Мероприятия</b>\n\nВыберите событие:",
+        reply_markup=build_events_list_keyboard(rows),
+    )
+
+
+async def edit_events_list(callback: CallbackQuery, db_pool):
+    rows = await get_active_events(db_pool)
+
+    if not rows:
+        await callback.message.edit_text(
+            "📅 <b>Мероприятия</b>\n\nПока нет активных мероприятий."
+        )
+        return
+
+    await callback.message.edit_text(
+        "📅 <b>Мероприятия</b>\n\nВыберите событие:",
+        reply_markup=build_events_list_keyboard(rows),
+    )
+
+
+async def show_event_card(callback: CallbackQuery, db_pool, event_id: str):
+    row = await get_event_by_id(db_pool, event_id)
+
+    if not row:
+        await callback.answer("Событие не найдено", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        build_event_text(row),
+        reply_markup=build_event_card_keyboard(),
+    )
+
 
 @router.message(F.text == "📘 Полезная информация")
 async def menu_useful_info(message: Message):
@@ -714,25 +854,40 @@ async def callback_open_page(callback: CallbackQuery, db_pool):
     await show_page(callback, db_pool, section_code, page_id)
     await callback.answer()
 
+@router.callback_query(F.data == "events:list")
+async def callback_events_list(callback: CallbackQuery, db_pool):
+    await edit_events_list(callback, db_pool)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("events:open:"))
+async def callback_events_open(callback: CallbackQuery, db_pool):
+    event_id = callback.data.split(":", maxsplit=2)[2]
+    await show_event_card(callback, db_pool, event_id)
+    await callback.answer()
 
 @router.message(F.text == "📅 Мероприятия")
 async def menu_events(message: Message, db_pool):
-    rows = await get_active_events(db_pool)
+    await show_events_list_message(message, db_pool)
+    
+# @router.message(F.text == "📅 Мероприятия")
+# async def menu_events(message: Message, db_pool):
+#     await show_events_list_message(message, db_pool)
 
-    if not rows:
-        await message.answer(
-            "📅 <b>Мероприятия</b>\n\nПока нет активных мероприятий.",
-            reply_markup=get_main_menu_keyboard(),
-        )
-        return
+    # if not rows:
+    #     await message.answer(
+    #         "📅 <b>Мероприятия</b>\n\nПока нет активных мероприятий.",
+    #         reply_markup=get_main_menu_keyboard(),
+    #     )
+    #     return
 
-    await message.answer(
-        "📅 <b>Мероприятия</b>\n\nАктуальные события:",
-        reply_markup=get_main_menu_keyboard(),
-    )
+    # await message.answer(
+    #     "📅 <b>Мероприятия</b>\n\nАктуальные события:",
+    #     reply_markup=get_main_menu_keyboard(),
+    # )
 
-    for row in rows:
-        await message.answer(
-            build_event_text(row),
-            reply_markup=get_main_menu_keyboard(),
-        )
+    # for row in rows:
+    #     await message.answer(
+    #         build_event_text(row),
+    #         reply_markup=get_main_menu_keyboard(),
+    #     )
