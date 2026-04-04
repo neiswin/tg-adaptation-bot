@@ -5,12 +5,12 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: tg_adaptation
-      POSTGRES_USER: tg_user
-      POSTGRES_PASSWORD: tg_password
-    volumes:
-      - pg_data:/var/lib/postgresql/data
+      POSTGRES_USER: tg_bot
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
 volumes:
-  pg_data:
+  postgres_data:
