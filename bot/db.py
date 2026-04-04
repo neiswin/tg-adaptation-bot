@@ -139,23 +139,47 @@ async def init_db(pool):
             CREATE TABLE IF NOT EXISTS events (
                 id BIGSERIAL PRIMARY KEY,
                 event_id TEXT NOT NULL UNIQUE,
-                event_date DATE NOT NULL,
-                event_time TIME,
+
                 title TEXT NOT NULL DEFAULT '',
+
+                date_start DATE,
+                date_end DATE,
+                time_start TIME,
+                time_end TIME,
+
+                date_precision TEXT NOT NULL DEFAULT 'day',
+                time_precision TEXT NOT NULL DEFAULT 'none',
+
+                date_text TEXT,
+                time_text TEXT,
+                sort_date DATE,
+
                 place TEXT,
                 description TEXT,
                 organizer TEXT,
                 contact TEXT,
                 link TEXT,
+
                 active BOOLEAN NOT NULL DEFAULT TRUE,
+                sort_order INT NOT NULL DEFAULT 0,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
         """)
 
         await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_events_date_active
-            ON events (event_date, active);
-        """)  
+            CREATE INDEX IF NOT EXISTS idx_events_active_sort
+            ON events (active, sort_date, sort_order);
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_date_start
+            ON events (date_start);
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_event_id
+            ON events (event_id);
+        """)
 
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_hall_schedule_hall_day_active_sort

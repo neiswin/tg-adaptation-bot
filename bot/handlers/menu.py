@@ -193,53 +193,149 @@ async def get_hall_schedule(db_pool):
     return rows
 
 
+async def sync_events(conn, rows: list[dict]):
+    items = []
+    for row in rows:
+        event_id = as_text(row.get("event_id"))
+        if not event_id:
+            continue
+
+        items.append({
+            "event_id": event_id,
+            "title": as_text(row.get("title")),
+
+            "date_start": as_optional_date_value(row.get("date_start")),
+            "date_end": as_optional_date_value(row.get("date_end")),
+            "time_start": as_optional_time_value(row.get("time_start")),
+            "time_end": as_optional_time_value(row.get("time_end")),
+
+            "date_precision": as_text(row.get("date_precision")) or "day",
+            "time_precision": as_text(row.get("time_precision")) or "none",
+
+            "date_text": as_optional_text(row.get("date_text")),
+            "time_text": as_optional_text(row.get("time_text")),
+            "sort_date": as_optional_date_value(row.get("sort_date")),
+
+            "place": as_optional_text(row.get("place")),
+            "description": as_optional_text(row.get("description")),
+            "organizer": as_optional_text(row.get("organizer")),
+            "contact": as_optional_text(row.get("contact")),
+            "link": as_optional_text(row.get("link")),
+
+            "active": as_bool(row.get("active")),
+            "sort_order": as_int(row.get("sort_order")),
+        })
+
+    async with conn.transaction():
+        await conn.execute("DELETE FROM events")
+        for item in items:
+            await conn.execute("""
+                INSERT INTO events (
+                    event_id,
+                    title,
+                    date_start,
+                    date_end,
+                    time_start,
+                    time_end,
+                    date_precision,
+                    time_precision,
+                    date_text,
+                    time_text,
+                    sort_date,
+                    place,
+                    description,
+                    organizer,
+                    contact,
+                    link,
+                    active,
+                    sort_order,
+                    updated_at
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                    $10, $11, $12, $13, $14, $15, $16,
+                    $17, $18, now()
+                )
+            """,
+            item["event_id"],
+            item["title"],
+            item["date_start"],
+            item["date_end"],
+            item["time_start"],
+            item["time_end"],
+            item["date_precision"],
+            item["time_precision"],
+            item["date_text"],
+            item["time_text"],
+            item["sort_date"],
+            item["place"],
+            item["description"],
+            item["organizer"],
+            item["contact"],
+            item["link"],
+            item["active"],
+            item["sort_order"])
+
+
 async def get_active_events(db_pool):
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT
                 event_id,
-                event_date,
-                event_time,
                 title,
+                date_start,
+                date_end,
+                time_start,
+                time_end,
+                date_precision,
+                time_precision,
+                date_text,
+                time_text,
+                sort_date,
                 place,
                 description,
                 organizer,
                 contact,
-                link
+                link,
+                sort_order
             FROM events
             WHERE active = TRUE
-              AND event_date >= CURRENT_DATE
-            ORDER BY event_date, event_time NULLS LAST, id
+            ORDER BY
+                sort_date NULLS LAST,
+                sort_order,
+                id
         """)
     return rows
 
+
+
 def build_event_text(row) -> str:
-    parts = []
+    parts = [f"<b>{row['title']}</b>"]
 
-    date_str = row["event_date"].strftime("%d.%m.%Y")
-    header = f"<b>{row['title']}</b>"
+    date_line = format_event_date(row)
+    time_line = format_event_time(row)
 
-    if row["event_time"]:
-        header += f"\n{date_str}, {row['event_time'].strftime('%H:%M')}"
-    else:
-        header += f"\n{date_str}"
-
-    parts.append(header)
+    if date_line and time_line:
+        parts.append(f"{date_line}, {time_line}")
+    elif date_line:
+        parts.append(date_line)
+    elif time_line:
+        parts.append(time_line)
 
     if row["place"]:
-        parts.append(f"Место: {row['place']}")
+        parts.append(f"<b>Место</b>: {row['place']}")
 
     if row["description"]:
         parts.append(normalize_html_text(row["description"]))
 
     if row["organizer"]:
-        parts.append(f"Организатор: {row['organizer']}")
+        parts.append(f"<b>Организатор</b>: {row['organizer']}")
 
     if row["contact"]:
-        parts.append(f"Контакт: {row['contact']}")
+        parts.append(f"<b>Контакт</b>: {row['contact']}")
 
     if row["link"]:
-        parts.append(f"Ссылка: {row['link']}")
+        parts.append(f"<b>Ссылка</b>: {row['link']}")
 
     return "\n\n".join(parts).strip()
 
@@ -271,6 +367,50 @@ def day_of_week_title(day: int) -> str:
         7: "Воскресенье",
     }
     return mapping.get(day, f"День {day}")
+
+def format_event_date(row) -> str:
+    if row["date_text"]:
+        return row["date_text"]
+
+    date_start = row["date_start"]
+    date_end = row["date_end"]
+    precision = row["date_precision"]
+
+    if precision == "none":
+        return "Дата уточняется"
+
+    if date_start and date_end:
+        if date_start.year == date_end.year and date_start.month == date_end.month:
+            return f"{date_start.strftime('%d')}-{date_end.strftime('%d.%m.%Y')}"
+        return f"{date_start.strftime('%d.%m.%Y')} - {date_end.strftime('%d.%m.%Y')}"
+
+    if date_start and precision == "month":
+        return date_start.strftime("%m.%Y")
+
+    if date_start:
+        return date_start.strftime("%d.%m.%Y")
+
+    return "Дата уточняется"
+
+
+def format_event_time(row) -> str:
+    if row["time_text"]:
+        return row["time_text"]
+
+    time_start = row["time_start"]
+    time_end = row["time_end"]
+    precision = row["time_precision"]
+
+    if precision == "all_day":
+        return "Весь день"
+
+    if time_start and time_end:
+        return f"{time_start.strftime('%H:%M')}-{time_end.strftime('%H:%M')}"
+
+    if time_start:
+        return time_start.strftime("%H:%M")
+
+    return ""
 
 
 def build_contact_text(row) -> str:
@@ -581,13 +721,13 @@ async def menu_events(message: Message, db_pool):
 
     if not rows:
         await message.answer(
-            "📅 <b>Мероприятия</b>\n\nПока нет ближайших активных мероприятий.",
+            "📅 <b>Мероприятия</b>\n\nПока нет активных мероприятий.",
             reply_markup=get_main_menu_keyboard(),
         )
         return
 
     await message.answer(
-        "📅 <b>Мероприятия</b>\n\nБлижайшие события:",
+        "📅 <b>Мероприятия</b>\n\nАктуальные события:",
         reply_markup=get_main_menu_keyboard(),
     )
 

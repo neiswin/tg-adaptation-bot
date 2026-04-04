@@ -41,6 +41,28 @@ def as_day_of_week(value) -> int:
     }
     return mapping.get(raw, 1)
 
+def as_optional_date_value(value: str):
+    raw = as_text(value)
+    if not raw:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+
+    raise ValueError(f"Unsupported date format: {raw}")
+
+
+def as_optional_time_value(value: str):
+    raw = as_text(value)
+    if not raw:
+        return None
+
+    hh, mm = raw.split(":")
+    return time(hour=int(hh), minute=int(mm))
+
 
 def as_time_value(value: str) -> time:
     raw = as_text(value)
@@ -306,15 +328,28 @@ async def sync_events(conn, rows: list[dict]):
 
         items.append({
             "event_id": event_id,
-            "event_date": as_date_value(row.get("event_date")),
-            "event_time": as_optional_time_value(row.get("event_time")),
             "title": as_text(row.get("title")),
+
+            "date_start": as_optional_date_value(row.get("date_start")),
+            "date_end": as_optional_date_value(row.get("date_end")),
+            "time_start": as_optional_time_value(row.get("time_start")),
+            "time_end": as_optional_time_value(row.get("time_end")),
+
+            "date_precision": as_text(row.get("date_precision")) or "day",
+            "time_precision": as_text(row.get("time_precision")) or "none",
+
+            "date_text": as_optional_text(row.get("date_text")),
+            "time_text": as_optional_text(row.get("time_text")),
+            "sort_date": as_optional_date_value(row.get("sort_date")),
+
             "place": as_optional_text(row.get("place")),
             "description": as_optional_text(row.get("description")),
             "organizer": as_optional_text(row.get("organizer")),
             "contact": as_optional_text(row.get("contact")),
             "link": as_optional_text(row.get("link")),
+
             "active": as_bool(row.get("active")),
+            "sort_order": as_int(row.get("sort_order")),
         })
 
     async with conn.transaction():
@@ -322,21 +357,50 @@ async def sync_events(conn, rows: list[dict]):
         for item in items:
             await conn.execute("""
                 INSERT INTO events (
-                    event_id, event_date, event_time, title, place,
-                    description, organizer, contact, link, active, updated_at
+                    event_id,
+                    title,
+                    date_start,
+                    date_end,
+                    time_start,
+                    time_end,
+                    date_precision,
+                    time_precision,
+                    date_text,
+                    time_text,
+                    sort_date,
+                    place,
+                    description,
+                    organizer,
+                    contact,
+                    link,
+                    active,
+                    sort_order,
+                    updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                    $10, $11, $12, $13, $14, $15, $16,
+                    $17, $18, now()
+                )
             """,
             item["event_id"],
-            item["event_date"],
-            item["event_time"],
             item["title"],
+            item["date_start"],
+            item["date_end"],
+            item["time_start"],
+            item["time_end"],
+            item["date_precision"],
+            item["time_precision"],
+            item["date_text"],
+            item["time_text"],
+            item["sort_date"],
             item["place"],
             item["description"],
             item["organizer"],
             item["contact"],
             item["link"],
-            item["active"])
+            item["active"],
+            item["sort_order"])
 
 SOURCES = [
     ("welcome_slides", settings.sheet_welcome_csv, sync_welcome_slides),
