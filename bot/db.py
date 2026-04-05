@@ -196,6 +196,37 @@ async def init_db(pool):
                 error_text TEXT
             );
         """)
+        
+        await conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE;
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS announcements (
+                id BIGSERIAL PRIMARY KEY,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                created_by BIGINT NOT NULL,
+                text_html TEXT NOT NULL DEFAULT '',
+                photo_file_id TEXT,
+                status TEXT NOT NULL DEFAULT 'draft',
+                posted_at TIMESTAMPTZ,
+                preview_chat_id BIGINT,
+                preview_message_id BIGINT,
+                sent_job_started_at TIMESTAMPTZ,
+                sent_job_finished_at TIMESTAMPTZ
+            );
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS announcement_stats (
+                announcement_id BIGINT PRIMARY KEY REFERENCES announcements(id) ON DELETE CASCADE,
+                total_target INT NOT NULL DEFAULT 0,
+                sent_ok INT NOT NULL DEFAULT 0,
+                sent_fail INT NOT NULL DEFAULT 0,
+                blocked_count INT NOT NULL DEFAULT 0
+            );
+        """)
 
 async def upsert_user(
     pool,
