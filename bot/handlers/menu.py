@@ -36,7 +36,7 @@ def build_content_section_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏢 О предприятии", callback_data="section:open:enterprise")],
             [InlineKeyboardButton(text="🤝 Профсоюз", callback_data="section:open:union")],
             [InlineKeyboardButton(text="🏛 Общественные организации", callback_data="section:open:public_orgs")],
-            [InlineKeyboardButton(text="🏐 Расписание залов", callback_data="info:halls")],
+            [InlineKeyboardButton(text="⚽🏊‍♂️🏓 Расписание залов", callback_data="info:halls")],
             [InlineKeyboardButton(text="❓ FAQ", callback_data="info:faq")],
         ]
     )
@@ -46,25 +46,63 @@ def build_section_menu_keyboard(section_code: str, pages) -> InlineKeyboardMarku
     buttons = []
 
     for page in pages:
-        button_title = page["menu_title"] or page["title"] or page["page_id"]
+        title = page["menu_title"] or page["title"] or "Без названия"
         buttons.append([
             InlineKeyboardButton(
-                text=button_title,
+                text=title,
                 callback_data=f"page:open:{section_code}:{page['page_id']}",
             )
         ])
 
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="info:root")])
+    if section_code in {"enterprise", "union", "public_orgs"}:
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="info:root")])
+    else:
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main:noop")])
+
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+def build_page_keyboard(
+    section_code: str,
+    parent_code: str | None = None,
+    child_pages=None,
+) -> InlineKeyboardMarkup:
+    buttons = []
 
-def build_page_keyboard(section_code: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"section:open:{section_code}")],
-            [InlineKeyboardButton(text="📘 В полезную информацию", callback_data="info:root")],
-        ]
-    )
+    if child_pages:
+        for child in child_pages:
+            title = child["menu_title"] or child["title"] or "Без названия"
+            buttons.append([
+                InlineKeyboardButton(
+                    text=title,
+                    callback_data=f"page:open:{section_code}:{child['page_id']}",
+                )
+            ])
+
+    if parent_code:
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"page:open:{section_code}:{parent_code}",
+            )
+        ])
+    else:
+        if section_code in {"enterprise", "union", "public_orgs"}:
+            back_callback = "info:root"
+        elif section_code == "about_bot":
+            back_callback = "main_menu"
+        elif section_code == "youth_council":
+            back_callback = "main_menu"
+        else:
+            back_callback = f"section:open:{section_code}"
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=back_callback,
+            )
+        ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def build_info_back_keyboard() -> InlineKeyboardMarkup:
@@ -95,6 +133,7 @@ def build_contacts_group_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
+
 def build_events_list_keyboard(rows) -> InlineKeyboardMarkup:
     buttons = []
 
@@ -117,7 +156,7 @@ def build_event_card_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-async def get_section_pages(db_pool, section_code: str):
+async def get_root_pages(db_pool, section_code: str):
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT
@@ -133,12 +172,34 @@ async def get_section_pages(db_pool, section_code: str):
             FROM content_pages
             WHERE active = TRUE
               AND section_code = $1
+              AND (parent_code IS NULL OR parent_code = '')
             ORDER BY sort_order, id
         """, section_code)
     return rows
 
 
-async def get_page_by_id(db_pool, section_code: str, page_id: str):
+async def get_child_pages(db_pool, parent_code: str):
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                page_id,
+                section_code,
+                parent_code,
+                menu_title,
+                title,
+                body_html,
+                button_text,
+                button_url,
+                sort_order
+            FROM content_pages
+            WHERE active = TRUE
+              AND parent_code = $1
+            ORDER BY sort_order, id
+        """, parent_code)
+    return rows
+
+
+async def get_page_by_id(db_pool, page_id: str):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow("""
             SELECT
@@ -153,10 +214,9 @@ async def get_page_by_id(db_pool, section_code: str, page_id: str):
                 sort_order
             FROM content_pages
             WHERE active = TRUE
-              AND section_code = $1
-              AND page_id = $2
+              AND page_id = $1
             LIMIT 1
-        """, section_code, page_id)
+        """, page_id)
     return row
 
 
@@ -214,90 +274,6 @@ async def get_hall_schedule(db_pool):
     return rows
 
 
-async def sync_events(conn, rows: list[dict]):
-    items = []
-    for row in rows:
-        event_id = as_text(row.get("event_id"))
-        if not event_id:
-            continue
-
-        items.append({
-            "event_id": event_id,
-            "title": as_text(row.get("title")),
-
-            "date_start": as_optional_date_value(row.get("date_start")),
-            "date_end": as_optional_date_value(row.get("date_end")),
-            "time_start": as_optional_time_value(row.get("time_start")),
-            "time_end": as_optional_time_value(row.get("time_end")),
-
-            "date_precision": as_text(row.get("date_precision")) or "day",
-            "time_precision": as_text(row.get("time_precision")) or "none",
-
-            "date_text": as_optional_text(row.get("date_text")),
-            "time_text": as_optional_text(row.get("time_text")),
-            "sort_date": as_optional_date_value(row.get("sort_date")),
-
-            "place": as_optional_text(row.get("place")),
-            "description": as_optional_text(row.get("description")),
-            "organizer": as_optional_text(row.get("organizer")),
-            "contact": as_optional_text(row.get("contact")),
-            "link": as_optional_text(row.get("link")),
-
-            "active": as_bool(row.get("active")),
-            "sort_order": as_int(row.get("sort_order")),
-        })
-
-    async with conn.transaction():
-        await conn.execute("DELETE FROM events")
-        for item in items:
-            await conn.execute("""
-                INSERT INTO events (
-                    event_id,
-                    title,
-                    date_start,
-                    date_end,
-                    time_start,
-                    time_end,
-                    date_precision,
-                    time_precision,
-                    date_text,
-                    time_text,
-                    sort_date,
-                    place,
-                    description,
-                    organizer,
-                    contact,
-                    link,
-                    active,
-                    sort_order,
-                    updated_at
-                )
-                VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9,
-                    $10, $11, $12, $13, $14, $15, $16,
-                    $17, $18, now()
-                )
-            """,
-            item["event_id"],
-            item["title"],
-            item["date_start"],
-            item["date_end"],
-            item["time_start"],
-            item["time_end"],
-            item["date_precision"],
-            item["time_precision"],
-            item["date_text"],
-            item["time_text"],
-            item["sort_date"],
-            item["place"],
-            item["description"],
-            item["organizer"],
-            item["contact"],
-            item["link"],
-            item["active"],
-            item["sort_order"])
-
-
 async def get_active_events(db_pool):
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
@@ -327,6 +303,8 @@ async def get_active_events(db_pool):
                 id
         """)
     return rows
+
+
 async def get_event_by_id(db_pool, event_id: str):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow("""
@@ -354,7 +332,6 @@ async def get_event_by_id(db_pool, event_id: str):
             LIMIT 1
         """, event_id)
     return row
-
 
 
 def build_event_text(row) -> str:
@@ -415,6 +392,7 @@ def day_of_week_title(day: int) -> str:
     }
     return mapping.get(day, f"День {day}")
 
+
 MONTH_NAMES_RU = {
     1: "января",
     2: "февраля",
@@ -444,6 +422,7 @@ MONTH_NAMES_RU_NOMINATIVE = {
     11: "Ноябрь",
     12: "Декабрь",
 }
+
 
 def format_event_date(row) -> str:
     if row["date_text"]:
@@ -510,6 +489,7 @@ def format_date_human(dt) -> str:
 def format_month_human(dt) -> str:
     return f"{MONTH_NAMES_RU_NOMINATIVE[dt.month]} {dt.year}"
 
+
 def build_contact_text(row) -> str:
     parts = []
 
@@ -558,8 +538,7 @@ async def edit_info_root(callback: CallbackQuery):
 
 
 async def show_section_menu(message: Message, db_pool, section_code: str):
-    pages = await get_section_pages(db_pool, section_code)
-
+    pages = await get_root_pages(db_pool, section_code)
     title = SECTION_TITLES.get(section_code, "Раздел")
 
     if not pages:
@@ -569,21 +548,68 @@ async def show_section_menu(message: Message, db_pool, section_code: str):
         )
         return
 
+    if len(pages) == 1:
+        page = pages[0]
+        child_pages = await get_child_pages(db_pool, page["page_id"])
+
+        parts = []
+        if page["title"]:
+            parts.append(f"<b>{page['title']}</b>")
+        if page["body_html"]:
+            parts.append(normalize_html_text(page["body_html"]))
+
+        text = "\n\n".join(parts).strip() or "Без содержимого."
+
+        await message.answer(
+            text,
+            reply_markup=build_page_keyboard(
+                section_code=page["section_code"],
+                parent_code=page["parent_code"],
+                child_pages=child_pages,
+            ),
+        )
+        return
+
     await message.answer(
         f"{title}\n\nВыберите раздел:",
         reply_markup=build_section_menu_keyboard(section_code, pages),
     )
 
-
 async def edit_section_menu(callback: CallbackQuery, db_pool, section_code: str):
-    pages = await get_section_pages(db_pool, section_code)
-
+    pages = await get_root_pages(db_pool, section_code)
     title = SECTION_TITLES.get(section_code, "Раздел")
 
     if not pages:
+        if section_code in {"enterprise", "union", "public_orgs"}:
+            back_markup = build_info_back_keyboard()
+        else:
+            back_markup = None
+
         await callback.message.edit_text(
             f"{title}\n\nРаздел пока пуст.",
-            reply_markup=build_info_back_keyboard(),
+            reply_markup=back_markup,
+        )
+        return
+
+    if len(pages) == 1:
+        page = pages[0]
+        child_pages = await get_child_pages(db_pool, page["page_id"])
+
+        parts = []
+        if page["title"]:
+            parts.append(f"<b>{page['title']}</b>")
+        if page["body_html"]:
+            parts.append(normalize_html_text(page["body_html"]))
+
+        text = "\n\n".join(parts).strip() or "Без содержимого."
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=build_page_keyboard(
+                section_code=page["section_code"],
+                parent_code=page["parent_code"],
+                child_pages=child_pages,
+            ),
         )
         return
 
@@ -592,13 +618,14 @@ async def edit_section_menu(callback: CallbackQuery, db_pool, section_code: str)
         reply_markup=build_section_menu_keyboard(section_code, pages),
     )
 
-
 async def show_page(callback: CallbackQuery, db_pool, section_code: str, page_id: str):
-    page = await get_page_by_id(db_pool, section_code, page_id)
+    page = await get_page_by_id(db_pool, page_id)
 
     if not page:
         await callback.answer("Страница не найдена", show_alert=True)
         return
+
+    child_pages = await get_child_pages(db_pool, page["page_id"])
 
     parts = []
 
@@ -612,7 +639,11 @@ async def show_page(callback: CallbackQuery, db_pool, section_code: str, page_id
 
     await callback.message.edit_text(
         text,
-        reply_markup=build_page_keyboard(section_code),
+        reply_markup=build_page_keyboard(
+            section_code=page["section_code"],
+            parent_code=page["parent_code"],
+            child_pages=child_pages,
+        ),
     )
 
 
@@ -676,12 +707,12 @@ async def show_halls(callback: CallbackQuery, db_pool):
 
     if not rows:
         await callback.message.edit_text(
-            "🏐 <b>Расписание залов</b>\n\nРаздел пока пуст.",
+            "⚽🏊‍♂️🏓 <b>Расписание залов</b>\n\nРаздел пока пуст.",
             reply_markup=build_info_back_keyboard(),
         )
         return
 
-    parts = ["🏐 <b>Расписание залов</b>"]
+    parts = ["⚽🏊‍♂️🏓 <b>Расписание залов</b>"]
     current_hall = None
     current_day = None
 
@@ -738,6 +769,7 @@ async def show_faq(callback: CallbackQuery, db_pool):
         "\n".join(parts),
         reply_markup=build_info_back_keyboard(),
     )
+
 
 async def show_events_list_message(message: Message, db_pool):
     rows = await get_active_events(db_pool)
@@ -803,6 +835,11 @@ async def menu_contacts(message: Message, db_pool):
     await show_contacts_root_message(message, db_pool)
 
 
+@router.message(F.text == "📅 Мероприятия")
+async def menu_events(message: Message, db_pool):
+    await show_events_list_message(message, db_pool)
+
+
 @router.callback_query(F.data == "info:root")
 async def callback_info_root(callback: CallbackQuery):
     await edit_info_root(callback)
@@ -854,6 +891,7 @@ async def callback_open_page(callback: CallbackQuery, db_pool):
     await show_page(callback, db_pool, section_code, page_id)
     await callback.answer()
 
+
 @router.callback_query(F.data == "events:list")
 async def callback_events_list(callback: CallbackQuery, db_pool):
     await edit_events_list(callback, db_pool)
@@ -866,28 +904,19 @@ async def callback_events_open(callback: CallbackQuery, db_pool):
     await show_event_card(callback, db_pool, event_id)
     await callback.answer()
 
-@router.message(F.text == "📅 Мероприятия")
-async def menu_events(message: Message, db_pool):
-    await show_events_list_message(message, db_pool)
-    
-# @router.message(F.text == "📅 Мероприятия")
-# async def menu_events(message: Message, db_pool):
-#     await show_events_list_message(message, db_pool)
 
-    # if not rows:
-    #     await message.answer(
-    #         "📅 <b>Мероприятия</b>\n\nПока нет активных мероприятий.",
-    #         reply_markup=get_main_menu_keyboard(),
-    #     )
-    #     return
+@router.callback_query(F.data == "main:noop")
+async def callback_main_noop(callback: CallbackQuery):
+    await callback.answer()
 
-    # await message.answer(
-    #     "📅 <b>Мероприятия</b>\n\nАктуальные события:",
-    #     reply_markup=get_main_menu_keyboard(),
-    # )
-
-    # for row in rows:
-    #     await message.answer(
-    #         build_event_text(row),
-    #         reply_markup=get_main_menu_keyboard(),
-    #     )
+@router.callback_query(F.data == "main_menu")
+async def callback_main_menu(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "Возврат в главное меню.",
+        reply_markup=None,
+    )
+    await callback.message.answer(
+        "Выберите раздел:",
+        reply_markup=get_main_menu_keyboard(),
+    )
+    await callback.answer()
