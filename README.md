@@ -1,74 +1,83 @@
-# TG Adaptation Bot
+# tg-adaptation-bot
 
-Telegram-бот для адаптации молодых работников: справка по мероприятиям, путеводителю и внутренним ресурсам.  
-Контент редактируется через Google Sheets, состояние пользователей и статистика — в PostgreSQL.
+Telegram-бот адаптации и информирования молодых работников.
 
-## Возможности
-- Главное меню: мероприятия, путеводитель, FAQ, информация о боте
-- Мероприятия из Google Sheets (CSV), форматирование, отключение web-preview
-- Пагинация мероприятий по 5 штук (inline-кнопки)
-- Учёт пользователей (/start), статистика (/stats для админов)
-- (Опционально) /anons — рассылка анонсов администраторами (черновики, превью, рассылка, метрики)
+Бот помогает:
+- показывать onboarding при первом запуске;
+- выводить полезную информацию о предприятии;
+- показывать материалы о молодёжном совете;
+- хранить и отображать контакты;
+- показывать FAQ;
+- показывать расписание залов;
+- выводить мероприятия;
+- обновлять контент из Google Sheets без перезапуска;
+- отправлять анонсы всем пользователям бота.
 
-## Технологии
-- Python 3.10+
-- aiogram (v3)
-- PostgreSQL (Docker)
-- systemd service (24/7)
-- Google Sheets → CSV (публичная публикация листа)
+---
 
-## Быстрый старт (локально)
-1) Клонировать репозиторий
-2) Создать `.env` по примеру:
-```env
-BOT_TOKEN=...
-ADMIN_IDS=123456789,987654321
+## Основная идея
 
-SHEET_EVENTS_CSV=...
-CONTENT_REFRESH_SEC=300
+Архитектура проекта построена по схеме:
 
-## optional
-ANONS_RATE_DELAY=0.1
-Установить зависимости:
+**Google Sheets → sync → PostgreSQL → Telegram Bot**
 
-python -m venv venv
-source venv/bin/activate
-python -m pip install -r requirements.txt
-Запустить:
+Где:
+- **Google Sheets** — редакторский источник данных;
+- **PostgreSQL** — рабочее хранилище;
+- **Telegram-бот** — интерфейс для пользователей;
+- **background sync** — фоновое обновление контента.
 
-python -m bot.main
-Запуск на сервере (VPS)
-PostgreSQL поднимается через docker compose
+Бот **не читает Google Sheets напрямую на каждый запрос пользователя**.  
+Сначала данные загружаются в PostgreSQL, а уже потом читаются ботом из БД.
 
-Бот запускается через systemd unit
+Это даёт:
+- более быстрые ответы;
+- меньшую зависимость от сети;
+- устойчивость к временным сбоям Google Sheets;
+- удобную основу для дальнейшего развития проекта.
 
-Пример:
+---
 
-sudo systemctl status tg-adaptation-bot
-sudo journalctl -u tg-adaptation-bot -n 100 --no-pager
-Структура проекта
-bot/main.py — точка входа, handlers/routers
+## Что уже реализовано
 
-bot/db.py — подключение к PostgreSQL, учёт пользователей
+Сейчас в боте работают:
 
-bot/content_events.py — загрузка и форматирование мероприятий (Google Sheets CSV)
+- загрузка настроек из `.env`;
+- подключение к PostgreSQL через `asyncpg`;
+- создание таблиц при старте;
+- синхронизация контента из Google Sheets в PostgreSQL;
+- фоновое обновление контента по интервалу `CONTENT_REFRESH_SEC`;
+- onboarding-приветствие при первом запуске;
+- главное меню;
+- разделы:
+  - Полезная информация
+  - Молодёжный совет
+  - Контакты
+  - О боте
+  - Мероприятия
+- вложенная навигация через `parent_code` в `content_pages`;
+- ручная команда `/reload_content` для админа;
+- анонсы через `/anons` с превью и массовой рассылкой.
 
-bot/anons_handlers.py — (опционально) сценарий анонсов и история
+---
 
-Безопасность
-.env не хранится в репозитории
+## Структура проекта
 
-токены и ID админов задаются через переменные окружения
+```text
+bot/
+  main.py
+  config.py
+  db.py
 
-## 3) Добавь файл с примером окружения
+  handlers/
+    start.py
+    menu.py
+    admin.py
+    anons.py
 
-Создай `.env.example`:
-```bash
-nano .env.example
-BOT_TOKEN=PUT_YOUR_TOKEN_HERE
-ADMIN_IDS=123456789
+  keyboards/
+    main_menu.py
 
-SHEET_EVENTS_CSV=PASTE_PUBLIC_CSV_URL
-CONTENT_REFRESH_SEC=300
-
-ANONS_RATE_DELAY=0.1
+  services/
+    google_sheets.py
+    content_sync.py
