@@ -31,6 +31,7 @@ def as_bool(value) -> bool:
 def as_day_of_week(value) -> int:
     raw = as_text(value).lower()
     mapping = {
+        "0": 0, "любой день": 0, "ежедневно": 0, "каждый день": 0,
         "1": 1, "пн": 1, "понедельник": 1,
         "2": 2, "вт": 2, "вторник": 2,
         "3": 3, "ср": 3, "среда": 3,
@@ -291,8 +292,8 @@ async def sync_hall_schedule(conn, rows: list[dict]):
             "slot_id": slot_id,
             "hall_name": as_text(row.get("hall_name")),
             "day_of_week": as_day_of_week(row.get("day_of_week")),
-            "time_from": as_time_value(row.get("time_from")),
-            "time_to": as_time_value(row.get("time_to")),
+            "time_from": as_optional_time_value(row.get("time_from")),
+            "time_to": as_optional_time_value(row.get("time_to")),
             "activity": as_text(row.get("activity")),
             "note": as_optional_text(row.get("note")),
             "sort_order": as_int(row.get("sort_order")),

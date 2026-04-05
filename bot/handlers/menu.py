@@ -14,12 +14,29 @@ SECTION_TITLES = {
     "about_bot": "🤖 О боте",
 }
 
+
 CONTACT_GROUP_TITLES = {
-    "enterprise_contacts": "🏢 Контакты предприятия",
-    "hr_contacts": "🧾 Отдел кадров",
+    "enterprise_contacts": "🏢 Предприятие",
+    "management_contacts": "👔 Руководство",
+    "assistant_management_contacts": "🧾 Помощники руководства",
+    "electro_contacts": "⚡ Электротехническое направление",
+    "production_prep_contacts": "🏭 Подготовка производства",
+    "construction_control_contacts": "🏗 Строительный контроль",
+    "department_contacts": "📂 Отделы и службы",
     "union_contacts": "🤝 Профсоюз",
     "youth_contacts": "👥 Молодёжный совет",
 }
+
+CONTACT_GROUP_ORDER = [
+    "enterprise_contacts",
+    "management_contacts",
+    "assistant_management_contacts",
+    "electro_contacts",
+    "production_prep_contacts",
+    "construction_control_contacts",
+    "department_contacts",
+    "union_contacts",
+]
 
 
 def normalize_html_text(text: str) -> str:
@@ -27,7 +44,11 @@ def normalize_html_text(text: str) -> str:
 
 
 def get_contact_group_title(group_code: str) -> str:
-    return CONTACT_GROUP_TITLES.get(group_code, "📞 Контакты")
+    if group_code in CONTACT_GROUP_TITLES:
+        return CONTACT_GROUP_TITLES[group_code]
+
+    pretty = (group_code or "").replace("_contacts", "").replace("_", " ").strip().title()
+    return f"📞 {pretty}" if pretty else "📞 Контакты"
 
 
 def build_content_section_keyboard() -> InlineKeyboardMarkup:
@@ -55,18 +76,72 @@ def build_section_menu_keyboard(section_code: str, pages) -> InlineKeyboardMarku
         ])
 
     if section_code in {"enterprise", "union", "public_orgs"}:
-        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="info:root")])
+        back_callback = "info:root"
+    elif section_code in {"about_bot", "youth_council"}:
+        back_callback = "main:back"
     else:
-        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main:noop")])
+        back_callback = "main:back"
+
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)
+    ])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# def build_page_keyboard(
+#     section_code: str,
+#     parent_code: str | None = None,
+#     child_pages=None,
+# ) -> InlineKeyboardMarkup:
+#     buttons = []
+
+#     if child_pages:
+#         for child in child_pages:
+#             title = child["menu_title"] or child["title"] or "Без названия"
+#             buttons.append([
+#                 InlineKeyboardButton(
+#                     text=title,
+#                     callback_data=f"page:open:{section_code}:{child['page_id']}",
+#                 )
+#             ])
+
+#     if parent_code:
+#         buttons.append([
+#             InlineKeyboardButton(
+#                 text="⬅️ Назад",
+#                 callback_data=f"page:open:{section_code}:{parent_code}",
+#             )
+#         ])
+#     else:
+#         if section_code in {"enterprise", "union", "public_orgs"}:
+#             back_callback = "info:root"
+#         elif section_code in {"about_bot", "youth_council"}:
+#             back_callback = "main:back"
+#         else:
+#             back_callback = f"section:open:{section_code}"
+
+#         buttons.append([
+#             InlineKeyboardButton(
+#                 text="⬅️ Назад",
+#                 callback_data=back_callback,
+#             )
+#         ])
+
+#     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def build_page_keyboard(
     section_code: str,
     parent_code: str | None = None,
     child_pages=None,
+    button_text: str | None = None,
+    button_url: str | None = None,
 ) -> InlineKeyboardMarkup:
     buttons = []
+
+    if button_text and button_url:
+        buttons.append([
+            InlineKeyboardButton(text=button_text, url=button_url)
+        ])
 
     if child_pages:
         for child in child_pages:
@@ -79,31 +154,23 @@ def build_page_keyboard(
             ])
 
     if parent_code:
-        buttons.append([
-            InlineKeyboardButton(
-                text="⬅️ Назад",
-                callback_data=f"page:open:{section_code}:{parent_code}",
-            )
-        ])
+        back_callback = f"page:open:{section_code}:{parent_code}"
     else:
         if section_code in {"enterprise", "union", "public_orgs"}:
             back_callback = "info:root"
-        elif section_code == "about_bot":
-            back_callback = "main_menu"
-        elif section_code == "youth_council":
-            back_callback = "main_menu"
+        elif section_code in {"about_bot", "youth_council"}:
+            back_callback = "main:back"
         else:
             back_callback = f"section:open:{section_code}"
 
-        buttons.append([
-            InlineKeyboardButton(
-                text="⬅️ Назад",
-                callback_data=back_callback,
-            )
-        ])
+    buttons.append([
+        InlineKeyboardButton(
+            text="⬅️ Назад",
+            callback_data=back_callback,
+        )
+    ])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
 
 def build_info_back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -226,9 +293,14 @@ async def get_contact_group_codes(db_pool):
             SELECT DISTINCT group_code
             FROM contacts
             WHERE active = TRUE
-            ORDER BY group_code
         """)
-    return [row["group_code"] for row in rows if row["group_code"]]
+
+    existing_codes = [row["group_code"] for row in rows if row["group_code"]]
+
+    ordered_codes = [code for code in CONTACT_GROUP_ORDER if code in existing_codes]
+    extra_codes = sorted(code for code in existing_codes if code not in CONTACT_GROUP_ORDER)
+
+    return ordered_codes + extra_codes
 
 
 async def get_contacts_by_group(db_pool, group_code: str):
@@ -382,6 +454,7 @@ async def get_faq_items(db_pool):
 
 def day_of_week_title(day: int) -> str:
     mapping = {
+        0: "Любой день",
         1: "Понедельник",
         2: "Вторник",
         3: "Среда",
@@ -643,6 +716,8 @@ async def show_page(callback: CallbackQuery, db_pool, section_code: str, page_id
             section_code=page["section_code"],
             parent_code=page["parent_code"],
             child_pages=child_pages,
+            button_text=page["button_text"],
+            button_url=page["button_url"],
         ),
     )
 
@@ -714,33 +789,40 @@ async def show_halls(callback: CallbackQuery, db_pool):
 
     parts = ["⚽🏊‍♂️🏓 <b>Расписание залов</b>"]
     current_hall = None
-    current_day = None
 
     for row in rows:
         hall_name = row["hall_name"]
         day_name = day_of_week_title(row["day_of_week"])
-        time_from = row["time_from"].strftime("%H:%M")
-        time_to = row["time_to"].strftime("%H:%M")
+        time_from = row["time_from"].strftime("%H:%M") if row["time_from"] else None
+        time_to = row["time_to"].strftime("%H:%M") if row["time_to"] else None
 
         if hall_name != current_hall:
+            if current_hall is not None:
+                parts.append("\n━━━━━━━━━━")
+
             current_hall = hall_name
-            current_day = None
             parts.append(f"\n<b>{hall_name}</b>")
 
-        if row["day_of_week"] != current_day:
-            current_day = row["day_of_week"]
-            parts.append(f"\n{day_name}")
+        parts.append(f"\n 📅 {day_name}")
 
-        line = f"{time_from}-{time_to} — {row['activity']}"
+        if time_from and time_to:
+            parts.append(f"\n🕒 {time_from}–{time_to}")
+        elif time_from:
+            parts.append(f"\n 🕒 {time_from}")
+
+        parts.append(f"\n 🎯 {row['activity']}")
+
         if row["note"]:
-            line += f" ({row['note']})"
-        parts.append(line)
+            parts.append(f"\n ℹ️ {row['note']}")
+
+        parts.append("")
+
+    text = "\n".join(parts).strip()
 
     await callback.message.edit_text(
-        "\n".join(parts),
+        text,
         reply_markup=build_info_back_keyboard(),
     )
-
 
 async def show_faq(callback: CallbackQuery, db_pool):
     rows = await get_faq_items(db_pool)
@@ -905,16 +987,25 @@ async def callback_events_open(callback: CallbackQuery, db_pool):
     await callback.answer()
 
 
-@router.callback_query(F.data == "main:noop")
-async def callback_main_noop(callback: CallbackQuery):
-    await callback.answer()
+# @router.callback_query(F.data == "main:noop")
+# async def callback_main_noop(callback: CallbackQuery):
+#     await callback.answer()
 
-@router.callback_query(F.data == "main_menu")
-async def callback_main_menu(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "Возврат в главное меню.",
-        reply_markup=None,
-    )
+# @router.callback_query(F.data == "main_menu")
+# async def callback_main_menu(callback: CallbackQuery):
+#     await callback.message.edit_text(
+#         "Возврат в главное меню.",
+#         reply_markup=None,
+#     )
+#     await callback.message.answer(
+#         "Выберите раздел:",
+#         reply_markup=get_main_menu_keyboard(),
+#     )
+#     await callback.answer()
+
+@router.callback_query(F.data == "main:back")
+async def callback_main_back(callback: CallbackQuery):
+    await callback.message.edit_text("🏠 Возврат в главное меню.")
     await callback.message.answer(
         "Выберите раздел:",
         reply_markup=get_main_menu_keyboard(),

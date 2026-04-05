@@ -12,14 +12,22 @@ def _normalize_html_text(text: str) -> str:
     return (text or "").replace("\\n", "\n")
 
 
-def get_onboarding_keyboard(index: int, total: int) -> InlineKeyboardMarkup:
+def get_onboarding_keyboard(index: int, total: int, button_text: str | None = None, button_url: str | None = None) -> InlineKeyboardMarkup:
     buttons = []
 
+    if button_text and button_url:
+        buttons.append([
+            InlineKeyboardButton(text=button_text, url=button_url)
+        ])
+
     nav_row = []
+
     if index > 0:
         nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"welcome:prev:{index}"))
+
     if index < total - 1:
         nav_row.append(InlineKeyboardButton(text="➡️ Далее", callback_data=f"welcome:next:{index}"))
+
     if index == total - 1:
         nav_row.append(InlineKeyboardButton(text="🏠 В меню", callback_data="welcome:finish"))
 
@@ -69,7 +77,12 @@ async def send_welcome_slide(target, db_pool, index: int):
 
     text = "\n\n".join(text_parts).strip() or "👋 <b>Добро пожаловать</b>"
 
-    reply_markup = get_onboarding_keyboard(index, len(slides))
+    reply_markup = get_onboarding_keyboard(
+    index,
+    len(slides),
+    slide["button_text"],
+    slide["button_url"],
+    )
 
     if isinstance(target, Message):
         await target.answer(text, reply_markup=reply_markup)
